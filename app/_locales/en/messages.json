@@ -1,0 +1,10 @@
+{
+  "appName": {
+    "message": "hodulcine",
+    "description": "The name of the application"
+  },
+  "appDescription": {
+    "message": "Real-time tab sync across multiple active browsers.",
+    "description": "The description of the application"
+  }
+}
