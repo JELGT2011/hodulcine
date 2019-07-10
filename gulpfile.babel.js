@@ -1,9 +1,11 @@
-// generated on 2019-07-09 using generator-chrome-extension 0.7.2
 import gulp from 'gulp';
 import gulpLoadPlugins from 'gulp-load-plugins';
 import del from 'del';
 import runSequence from 'run-sequence';
 import {stream as wiredep} from 'wiredep';
+import browserify from 'browserify';
+import source from 'vinyl-source-stream';
+import es from 'event-stream';
 
 const $ = gulpLoadPlugins();
 
@@ -42,21 +44,20 @@ gulp.task('images', () => {
       // don't remove IDs from SVGs, they are often used
       // as hooks for embedding and styling
       svgoPlugins: [{cleanupIDs: false}]
-    }))
-    .on('error', function (err) {
+    })).on('error', (err) => {
       console.log(err);
       this.end();
     })))
     .pipe(gulp.dest('dist/images'));
 });
 
-gulp.task('html',  () => {
+gulp.task('html', () => {
   return gulp.src('app/*.html')
     .pipe($.useref({searchPath: ['.tmp', 'app', '.']}))
-    .pipe($.sourcemaps.init())
-    .pipe($.if('*.js', $.uglify()))
+    // .pipe($.sourcemaps.init())
+    // .pipe($.if('*.js', $.uglify()))
+    // .pipe($.sourcemaps.write())
     .pipe($.if('*.css', $.cleanCss({compatibility: '*'})))
-    .pipe($.sourcemaps.write())
     .pipe($.if('*.html', $.htmlmin({
       collapseWhitespace: true,
       minifyCSS: true,
@@ -76,21 +77,31 @@ gulp.task('chromeManifest', () => {
           'scripts/chromereload.js'
         ]
       }
-  }))
-  .pipe($.if('*.css', $.cleanCss({compatibility: '*'})))
-  .pipe($.if('*.js', $.sourcemaps.init()))
-  .pipe($.if('*.js', $.uglify()))
-  .pipe($.if('*.js', $.sourcemaps.write('.')))
-  .pipe(gulp.dest('dist'));
+    }))
+    .pipe($.if('*.css', $.cleanCss({compatibility: '*'})))
+    // .pipe($.if('*.js', $.sourcemaps.init()))
+    // .pipe($.if('*.js', $.uglify()))
+    // .pipe($.if('*.js', $.sourcemaps.write('.')))
+    .pipe(gulp.dest('dist'));
 });
 
 gulp.task('babel', () => {
-  return gulp.src('app/scripts.babel/**/*.js')
-      .pipe($.plumber())
-      .pipe($.babel({
-        presets: ['@babel/env']
-      }))
-      .pipe(gulp.dest('app/scripts'));
+  const files = [
+    'background.js',
+    'chromereload.js'
+  ];
+
+  const tasks = files.map(file => (
+    browserify({
+      entries: `./app/scripts.babel/${file}`,
+      debug: true
+    }).transform('babelify', {presets: ['@babel/env']})
+      .bundle()
+      .pipe(source(file))
+      .pipe(gulp.dest('app/scripts'))
+  ));
+
+  return es.merge.apply(null, tasks);
 });
 
 gulp.task('clean', del.bind(null, ['.tmp', 'dist']));
@@ -107,7 +118,6 @@ gulp.task('watch', ['lint', 'babel'], () => {
   ]).on('change', $.livereload.reload);
 
   gulp.watch('app/scripts.babel/**/*.js', ['lint', 'babel']);
-  gulp.watch('bower.json', ['wiredep']);
 });
 
 gulp.task('size', () => {
@@ -122,11 +132,11 @@ gulp.task('wiredep', () => {
     .pipe(gulp.dest('app'));
 });
 
-gulp.task('package', function () {
-  var manifest = require('./dist/manifest.json');
+gulp.task('package', () => {
+  let manifest = require('./dist/manifest.json');
   return gulp.src('dist/**')
-      .pipe($.zip('hodulcine-' + manifest.version + '.zip'))
-      .pipe(gulp.dest('package'));
+    .pipe($.zip('hodulcine-' + manifest.version + '.zip'))
+    .pipe(gulp.dest('package'));
 });
 
 gulp.task('build', (cb) => {
