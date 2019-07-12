@@ -18,9 +18,8 @@
     ]
   },
   "permissions": [
-    "debugger",
-    "tabs",
-    "storage"
+    "storage",
+    "tabs"
   ],
   "options_ui": {
     "page": "options.html",

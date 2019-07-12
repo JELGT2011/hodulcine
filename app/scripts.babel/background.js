@@ -3,13 +3,12 @@
 // this import should come first because it modifies the chromium api
 import 'chrome-extension-async';
 import uuid4 from 'uuid/v4';
+import Tab from './tab';
+import State from './state';
 
 function prettyPrint(obj) {
   return JSON.stringify(obj, null, '\t');
 }
-
-const STATE_PROPERTIES = new Set(['clientId', 'tabs', 'timestamp']);
-const TAB_SYNC_PROPERTIES = new Set(['index', 'url', 'active', 'pinned']);
 
 chrome.runtime.onInstalled.addListener(handleRuntimeOnInstalled);
 chrome.runtime.onStartup.addListener(handleRuntimeOnStartup);
@@ -42,8 +41,9 @@ function handleRuntimeOnStartup() {
 
 function handleStorageOnChanged(changes, areaName) {
   if (areaName !== 'sync') return;
+  if (changes && changes.clientId && changes.clientId === clientId) return;
   // noinspection JSIgnoredPromiseFromCall
-  mergeStatesByClientId();
+  setRemoteStateFromLocal();
 }
 
 function handleTabEvent(tab) {
@@ -54,83 +54,6 @@ function handleTabEvent(tab) {
 async function setRemoteStateFromLocal() {
   let localState = await getLocalState();
   await setRemoteState(localState);
-}
-
-async function mergeStatesByClientId() {
-  let remoteState = await getRemoteState();
-  if (remoteState && remoteState.clientId && remoteState.clientId !== clientId) {
-    console.log(
-      `remote state was updated by another client,
-      force updating local state:
-      localClientId = ${clientId}, remoteClientId = ${remoteState.clientId}`
-    );
-    await setLocalState(remoteState);
-  }
-}
-
-class Tab {
-
-  static get properties() {
-    return TAB_SYNC_PROPERTIES;
-  }
-
-  constructor(index, url, active, pinned) {
-    this.index = index;
-    this.url = url;
-    this.active = active;
-    this.pinned = pinned;
-  }
-
-  static fromObject(object) {
-    if (!(object &&
-      object.hasOwnProperty('index') &&
-      object.hasOwnProperty('url') &&
-      object.hasOwnProperty('active') &&
-      object.hasOwnProperty('pinned'))) return null;
-    return new Tab(object.index, object.url, object.active, object.pinned);
-  }
-
-  toObject() {
-    return {
-      index: this.index,
-      url: this.url,
-      active: this.active,
-      pinned: this.pinned,
-    }
-  }
-}
-
-class State {
-
-  static get properties() {
-    return STATE_PROPERTIES;
-  }
-
-  constructor(clientId = null, timestamp = 0, tabs = []) {
-    this.clientId = clientId;
-    this.timestamp = timestamp;
-    this.tabs = tabs;
-  }
-
-  static fromObject(object) {
-    if (!(object
-      && object.hasOwnProperty('clientId')
-      && object.hasOwnProperty('timestamp')
-      && object.hasOwnProperty('tabs'))) return null;
-    return new State(object.clientId, object.timestamp, object.tabs.map(Tab.fromObject));
-  }
-
-  toObject() {
-    return {
-      clientId: this.clientId,
-      timestamp: this.timestamp,
-      tabs: this.tabs.map((tab) => tab.toObject()),
-    }
-  }
-
-  get urls() {
-    return new Set(this.tabs.map((tab) => tab.url))
-  }
 }
 
 async function mergeStatesByTimestamp() {
