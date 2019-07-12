@@ -1,49 +1,71 @@
 'use strict';
 
+// this import should come first because it modifies the chromium api
 import 'chrome-extension-async';
+import uuid4 from 'uuid/v4';
 
-const STATE_PROPERTIES = new Set(['tabs', 'timestamp']);
+function prettyPrint(obj) {
+  return JSON.stringify(obj, null, '\t');
+}
+
+const STATE_PROPERTIES = new Set(['clientId', 'tabs', 'timestamp']);
 const TAB_SYNC_PROPERTIES = new Set(['index', 'url', 'active', 'pinned']);
 
 chrome.runtime.onInstalled.addListener(handleRuntimeOnInstalled);
-chrome.runtime.onStartup.addListener(handleMerge);
+chrome.runtime.onStartup.addListener(handleRuntimeOnStartup);
 
 chrome.storage.onChanged.addListener(handleStorageOnChanged);
 
-chrome.tabs.onCreated.addListener(handleMerge);
-
-// TODO: look up docs for these functions
-// chrome.tabs.onUpdated.addListener(handleMerge);
-// chrome.tabs.onMoved.addListener(handleMerge);
-// chrome.tabs.onActivated.addListener(handleMerge);
-// chrome.tabs.onRemoved.addListener(handleMerge);
-// chrome.tabs.onReplaced.addListener(handleMerge);
+chrome.tabs.onCreated.addListener(handleTabEvent);
+chrome.tabs.onUpdated.addListener(handleTabEvent);
+chrome.tabs.onMoved.addListener(handleTabEvent);
+chrome.tabs.onRemoved.addListener(handleTabEvent);
+chrome.tabs.onReplaced.addListener(handleTabEvent);
 
 // TODO: include information about windows, create proxy maps between window ids and match based on similarity
 // chrome.tabs.onAttached
 // chrome.tabs.onDetached
 // chrome.tabs.onHighlighted
 
+let clientId = null;
 
 function handleRuntimeOnInstalled(details) {
   console.log(`Installed new version. previousVersion = ${details.previousVersion}`);
+  clientId = clientId || uuid4();
 }
 
-// TODO: handle shouldn't execute if this client just updated the remote
+function handleRuntimeOnStartup() {
+  clientId = clientId || uuid4();
+  // noinspection JSIgnoredPromiseFromCall
+  mergeStatesByTimestamp();
+}
+
 function handleStorageOnChanged(changes, areaName) {
   if (areaName !== 'sync') return;
   // noinspection JSIgnoredPromiseFromCall
-  setLocalStateFromRemote();
+  mergeStatesByClientId();
 }
 
-function handleMerge() {
+function handleTabEvent(tab) {
   // noinspection JSIgnoredPromiseFromCall
-  mergeStates();
+  setRemoteStateFromLocal();
 }
 
-async function setLocalStateFromRemote() {
+async function setRemoteStateFromLocal() {
+  let localState = await getLocalState();
+  await setRemoteState(localState);
+}
+
+async function mergeStatesByClientId() {
   let remoteState = await getRemoteState();
-  await setLocalState(remoteState);
+  if (remoteState && remoteState.clientId && remoteState.clientId !== clientId) {
+    console.log(
+      `remote state was updated by another client,
+      force updating local state:
+      localClientId = ${clientId}, remoteClientId = ${remoteState.clientId}`
+    );
+    await setLocalState(remoteState);
+  }
 }
 
 class Tab {
@@ -84,20 +106,23 @@ class State {
     return STATE_PROPERTIES;
   }
 
-  constructor(timestamp = 0, tabs = []) {
+  constructor(clientId = null, timestamp = 0, tabs = []) {
+    this.clientId = clientId;
     this.timestamp = timestamp;
     this.tabs = tabs;
   }
 
   static fromObject(object) {
     if (!(object
+      && object.hasOwnProperty('clientId')
       && object.hasOwnProperty('timestamp')
       && object.hasOwnProperty('tabs'))) return null;
-    return new State(object.timestamp, object.tabs.map(Tab.fromObject));
+    return new State(object.clientId, object.timestamp, object.tabs.map(Tab.fromObject));
   }
 
   toObject() {
     return {
+      clientId: this.clientId,
       timestamp: this.timestamp,
       tabs: this.tabs.map((tab) => tab.toObject()),
     }
@@ -108,12 +133,12 @@ class State {
   }
 }
 
-async function mergeStates() {
-  let localState = await getOrCreateLocalState();
+async function mergeStatesByTimestamp() {
+  let localState = await getLocalState();
   let remoteState = await getRemoteState();
 
   if (!(remoteState instanceof State)) {
-    console.log(`remoteState does not exist, overwriting: localState = ${JSON.stringify(localState)}`);
+    console.log(`remoteState does not exist, overwriting: localState = ${prettyPrint(localState)}`);
     await setRemoteState(localState);
     return;
   }
@@ -124,33 +149,26 @@ async function mergeStates() {
   }
 
   if (remoteState.timestamp < localState.timestamp) {
-    console.log(`overwriting remote state to merge: localState = ${JSON.stringify(localState)}, remoteState = ${JSON.stringify(remoteState)}`);
+    console.log(`overwriting remote state to merge: localState = ${prettyPrint(localState)}, remoteState = ${prettyPrint(remoteState)}`);
     await setRemoteState(localState);
   } else {
-    console.log(`overwriting local state to merge: localState = ${JSON.stringify(localState)}, remoteState = ${JSON.stringify(remoteState)}`);
+    console.log(`overwriting local state to merge: localState = ${prettyPrint(localState)}, remoteState = ${prettyPrint(remoteState)}`);
     await setLocalState(remoteState);
   }
 }
 
-async function createLocalState() {
+async function getLocalState() {
   // TODO: fill in queryInfo
   let tabs = await chrome.tabs.query({});
   let localState = new State(
+    clientId,
     Date.now(),
     tabs.map(Tab.fromObject),
   );
 
-  console.log(`created local state: localState = ${JSON.stringify(localState)}`);
+  console.log(`created local state: localState = ${prettyPrint(localState)}`);
   await chrome.storage.local.set(localState.toObject());
   return localState;
-}
-
-async function getOrCreateLocalState() {
-  let localState = State.fromObject(await chrome.storage.local.get(State.properties));
-  console.log(`fetched local state: localState = ${JSON.stringify(localState)}`);
-
-  if (localState instanceof State) return localState;
-  return await createLocalState();
 }
 
 async function getRemoteState() {
@@ -158,9 +176,9 @@ async function getRemoteState() {
 }
 
 async function setLocalState(remoteState) {
-  let localState = await getOrCreateLocalState();
+  let localState = await getLocalState();
 
-  console.log(`setting local state from remote: remoteState = ${JSON.stringify(remoteState)}`);
+  console.log(`setting local state from remote: remoteState = ${prettyPrint(remoteState)}`);
   await chrome.storage.local.set(remoteState.toObject());
 
   let remoteUrls = new Set(remoteState.tabs.map((tab) => tab.url));
@@ -187,6 +205,6 @@ async function setLocalState(remoteState) {
 }
 
 async function setRemoteState(localState) {
-  console.log(`setting remote state from local: localState = ${JSON.stringify(localState)}`);
+  console.log(`setting remote state from local: localState = ${prettyPrint(localState)}`);
   await chrome.storage.sync.set(localState.toObject());
 }

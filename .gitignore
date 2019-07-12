@@ -3,6 +3,7 @@
 temp/
 tmp/
 dist/
+package/
 
 # Created by https://www.gitignore.io/api/osx,node,linux,intellij+all
 # Edit at https://www.gitignore.io/?templates=osx,node,linux,intellij+all
